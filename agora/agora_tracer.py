@@ -21,7 +21,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 from traceloop.sdk import Traceloop
 from agora import AsyncNode, AsyncFlow, AsyncBatchNode, AsyncParallelBatchNode
-import os, time, asyncio
+import os, time, asyncio, inspect, functools
 
 _initialized = False
 tracer = None
@@ -94,6 +94,101 @@ def init_traceloop(
     _initialized = True
     print(f"✅ Traceloop initialized: {app_name}")
 
+
+# ==============================================================
+# DECORATOR - Wrap functions into TracedAsyncNode
+# ==============================================================
+
+def agora_node(name=None, max_retries=1, wait=0):
+    """
+    Decorator to convert any function into a TracedAsyncNode.
+
+    This allows you to wrap existing functions without subclassing.
+    The function receives the shared dict and can read/write to it.
+
+    Usage:
+        @agora_node(name="MyAgent")
+        async def my_agent(shared):
+            # Access shared state
+            user_input = shared.get("input", "")
+
+            # Do your work (existing code!)
+            result = await openai.call(user_input)
+
+            # Store results
+            shared["result"] = result
+
+            # Return action for routing
+            return "next"
+
+    Args:
+        name: Optional node name (defaults to function name)
+        max_retries: Number of retry attempts (default: 1)
+        wait: Wait time between retries in seconds (default: 0)
+
+    Returns:
+        TracedAsyncNode instance with your function as exec_async
+    """
+    def decorator(func):
+        # Get function name if name not provided
+        node_name = name or func.__name__
+
+        # Check if function is async or sync
+        is_async = inspect.iscoroutinefunction(func)
+
+        # Create a custom node class dynamically
+        class DecoratedNode(TracedAsyncNode):
+            def __init__(self):
+                super().__init__(node_name, max_retries=max_retries, wait=wait)
+                self._wrapped_func = func
+
+            async def exec_async(self, prep_res):
+                """
+                Execute the wrapped function.
+                prep_res is the shared dict passed from prep_async.
+                """
+                if is_async:
+                    # Async function - await it directly
+                    return await self._wrapped_func(prep_res)
+                else:
+                    # Sync function - run in thread to avoid blocking
+                    return await asyncio.to_thread(self._wrapped_func, prep_res)
+
+            async def prep_async(self, shared):
+                """
+                Default prep: just pass the shared dict to exec.
+                Users can still subclass if they need custom prep/post.
+                """
+                return shared
+
+            async def post_async(self, shared, prep_res, exec_res):
+                """
+                Default post: return the exec result as the action.
+                This allows the wrapped function's return value to control routing.
+                """
+                return exec_res
+
+        # Return an instance of the node
+        return DecoratedNode()
+
+    return decorator
+
+
+def task(name=None, max_retries=1, wait=0):
+    """
+    Alias for @agora_node decorator - matches common terminology.
+
+    Usage:
+        @task(name="ProcessData")
+        def process_data(shared):
+            return shared["data"].upper()
+    """
+    return agora_node(name=name, max_retries=max_retries, wait=wait)
+
+
+# ==============================================================
+# TRACED CLASSES
+# ==============================================================
 
 # Traced classes (same as before)
 class TracedAsyncNode(AsyncNode):
@@ -189,4 +284,10 @@ class TracedAsyncFlow(AsyncFlow):
 
 
 # Export public API
-__all__ = ['init_traceloop', 'TracedAsyncNode', 'TracedAsyncFlow']
+__all__ = [
+    'init_traceloop',
+    'TracedAsyncNode',
+    'TracedAsyncFlow',
+    'agora_node',  # Decorator for wrapping functions
+    'task',        # Alias for agora_node
+]
