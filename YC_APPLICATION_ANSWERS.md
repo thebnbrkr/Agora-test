@@ -169,9 +169,13 @@ Every node execution is automatically traced with OpenTelemetry. Developers get:
 
 **Competitors:**
 
-**1. LangChain / LangGraph**
-- Focus: General-purpose LLM framework
-- Weakness: Observability is an afterthought (LangSmith is separate product). Complex API, steep learning curve.
+**1. LangGraph (our closest competitor)**
+- Focus: State machine framework for agent workflows
+- Weakness:
+  - **Requires rewriting workflows** into their StateGraph framework (typed state schemas, graph nodes, edges)
+  - **Observability is paid add-on** - requires separate LangSmith subscription ($39-299/mo)
+  - **Framework lock-in** - can't easily extract your logic
+  - Heavy abstraction layer vs. Agora's "just decorate your functions" approach
 
 **2. CrewAI**
 - Focus: Multi-agent coordination with roles
@@ -189,6 +193,37 @@ Every node execution is automatically traced with OpenTelemetry. Developers get:
 - Focus: RAG pipelines
 - Weakness: Limited to RAG use cases. Not designed for general agent orchestration.
 
+**Side-by-Side Comparison (Agora vs. LangGraph):**
+
+```python
+# LANGGRAPH - Must restructure into their framework
+from langgraph.graph import StateGraph, END
+from typing import TypedDict
+
+class AgentState(TypedDict):  # Required schema
+    messages: list
+
+def my_agent(state: AgentState) -> AgentState:  # Must fit signature
+    response = openai.call(state["messages"])
+    return {"messages": state["messages"] + [response]}
+
+workflow = StateGraph(AgentState)
+workflow.add_node("agent", my_agent)
+workflow.add_edge("agent", END)
+# Observability: Subscribe to LangSmith ($39-299/mo)
+
+# AGORA - Just decorate existing functions
+@agora_node(name="Agent")
+async def my_agent(shared):
+    response = await openai.call(shared["messages"])
+    shared["result"] = response
+    return "next"
+
+flow = TracedAsyncFlow("Pipeline")
+flow.start(my_agent)
+# Observability: Built-in, free, OpenTelemetry
+```
+
 **What we understand that they don't:**
 
 **1. Observability is non-negotiable, not a feature**
@@ -196,10 +231,11 @@ Every node execution is automatically traced with OpenTelemetry. Developers get:
 - We believe it should be built-in from day one - you can't debug agent systems without it
 - Using OpenTelemetry (not proprietary format) means teams can use their existing tools
 
-**2. Developers want simplicity, not frameworks**
-- LangChain has 1000+ classes. Developers want to write functions, not learn a DSL.
-- Our decorator approach: wrap existing code, minimal refactoring
-- "Framework" vs "library" - we're a library that stays out of your way
+**2. Developers want to wrap existing code, not rewrite it**
+- LangGraph requires restructuring into StateGraph + typed schemas
+- Agora: just add `@agora_node` to your existing async functions
+- Real adoption barrier isn't features, it's "how much do I need to rewrite?"
+- We win by being the path of least resistance
 
 **3. The market is enterprises with existing agents, not researchers**
 - Competitors target AI researchers building new things from scratch
