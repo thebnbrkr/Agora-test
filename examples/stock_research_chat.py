@@ -449,7 +449,8 @@ def create_chat_interface():
         chatbot = gr.Chatbot(
             label="Stock Research Assistant",
             height=500,
-            show_copy_button=True
+            show_copy_button=True,
+            type="tuples"  # Fix deprecation warning
         )
 
         with gr.Row():
@@ -501,7 +502,7 @@ def main():
     demo.launch(
         share=False,
         server_name="0.0.0.0",
-        server_port=7860,
+        server_port=7861,  # Different port from stock_research_app.py
         show_error=True
     )
 
