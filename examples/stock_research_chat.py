@@ -56,15 +56,18 @@ except ImportError as e:
 
 print("🚀 Initializing Stock Research Chat Assistant...")
 
+# Initialize with both console and file export
 init_traceloop(
     app_name="stock_chat_assistant",
-    export_to_console=True,
+    export_to_console=True,  # Show in terminal
+    export_to_file="telemetry_traces.jsonl",  # Save to file
     disable_content_logging=True
 )
 
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-print("✅ Ready!\n")
+print("✅ Ready!")
+print("📊 Telemetry: Console + telemetry_traces.jsonl\n")
 
 # ============================================================================
 # ALPHA VANTAGE API
@@ -411,15 +414,34 @@ async def chat_response(message: str, history: List[Tuple[str, str]]):
     # Create shared state
     shared = {
         "user_message": message,
-        "chat_history": chat_history
+        "chat_history": chat_history,
+        "start_time": datetime.now()
     }
 
     # Run workflow
     flow = build_chat_flow()
 
     try:
+        import time
+        start = time.time()
         await flow.run_async(shared)
+        elapsed = time.time() - start
+
         response = shared.get("bot_response", "I'm not sure how to respond to that.")
+
+        # Add execution stats
+        stats = f"\n\n---\n*⏱️ Workflow executed in {elapsed:.2f}s*"
+
+        # Add node execution info if available
+        if shared.get("search_results"):
+            stats += f" | 🔍 Found {len(shared['search_results'])} companies"
+        if shared.get("quotes"):
+            stats += f" | 📊 Fetched {len(shared['quotes'])} quotes"
+        if shared.get("overviews"):
+            stats += f" | 📋 Got {len(shared['overviews'])} overviews"
+
+        response += stats
+
     except Exception as e:
         response = f"Sorry, I encountered an error: {str(e)}"
 
@@ -427,6 +449,29 @@ async def chat_response(message: str, history: List[Tuple[str, str]]):
     history.append((message, response))
 
     return history
+
+
+def view_telemetry():
+    """View telemetry data from file."""
+    try:
+        with open("telemetry_traces.jsonl", "r") as f:
+            lines = f.readlines()[-20:]  # Last 20 traces
+
+        traces = []
+        for line in lines:
+            try:
+                trace = json.loads(line)
+                name = trace.get("name", "unknown")
+                duration = trace.get("attributes", {}).get("duration_ms", "N/A")
+                traces.append(f"{name}: {duration}ms")
+            except:
+                continue
+
+        return "\n".join(traces) if traces else "No telemetry data yet"
+    except FileNotFoundError:
+        return "No telemetry file found. Make a query first!"
+    except Exception as e:
+        return f"Error reading telemetry: {str(e)}"
 
 
 def create_chat_interface():
@@ -446,39 +491,70 @@ def create_chat_interface():
         *I'll search for companies, fetch data, and answer your questions!*
         """)
 
-        chatbot = gr.Chatbot(
-            label="Stock Research Assistant",
-            height=500,
-            show_copy_button=True,
-            type="tuples"  # Fix deprecation warning
-        )
-
-        with gr.Row():
-            msg = gr.Textbox(
-                label="Your message",
-                placeholder="Ask about stocks, companies, or markets...",
-                lines=2,
-                scale=4
+        with gr.Tab("💬 Chat"):
+            chatbot = gr.Chatbot(
+                label="Stock Research Assistant",
+                height=500,
+                show_copy_button=True,
+                type="tuples"
             )
-            submit = gr.Button("Send", variant="primary", scale=1)
 
-        gr.Markdown("""
-        ---
-        **Tips:**
-        - Ask follow-up questions to dive deeper
-        - Request comparisons between companies
-        - Search by company name or industry
-        - Ask about competitors in a sector
+            with gr.Row():
+                msg = gr.Textbox(
+                    label="Your message",
+                    placeholder="Ask about stocks, companies, or markets...",
+                    lines=2,
+                    scale=4
+                )
+                submit = gr.Button("Send", variant="primary", scale=1)
 
-        **Rate Limits:** Alpha Vantage free tier = 5 API calls/minute
-        """)
+            gr.Markdown("""
+            ---
+            **Tips:**
+            - Ask follow-up questions to dive deeper
+            - Request comparisons between companies
+            - Search by company name or industry
+            - Ask about competitors in a sector
 
-        # Handle submission
-        async def submit_message(message, history):
-            return await chat_response(message, history)
+            **Rate Limits:** Alpha Vantage free tier = 5 API calls/minute
+            """)
 
-        msg.submit(submit_message, [msg, chatbot], [chatbot])
-        submit.click(submit_message, [msg, chatbot], [chatbot])
+            # Handle submission
+            async def submit_message(message, history):
+                return await chat_response(message, history)
+
+            msg.submit(submit_message, [msg, chatbot], [chatbot])
+            submit.click(submit_message, [msg, chatbot], [chatbot])
+
+        with gr.Tab("📊 Telemetry"):
+            gr.Markdown("""
+            ## 📊 Workflow Telemetry
+
+            View execution traces from Agora nodes. Each query's workflow is tracked with:
+            - Node execution times
+            - Retry attempts
+            - Error tracking
+            - API call performance
+            """)
+
+            telemetry_output = gr.Textbox(
+                label="Recent Traces (Last 20)",
+                lines=20,
+                max_lines=30,
+                interactive=False
+            )
+
+            refresh_btn = gr.Button("🔄 Refresh Telemetry", variant="secondary")
+            refresh_btn.click(view_telemetry, outputs=telemetry_output)
+
+            gr.Markdown("""
+            ---
+            **Telemetry Files:**
+            - `telemetry_traces.jsonl` - Complete trace log (JSONL format)
+            - Console output - Real-time OpenTelemetry spans
+
+            Each trace includes: timestamp, node name, duration, attributes, errors
+            """)
 
     return demo
 
