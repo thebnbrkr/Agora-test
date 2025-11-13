@@ -38,41 +38,32 @@ except ImportError as e:
 
 
 # ============================================================================
-# CONFIGURATION
+# CONFIGURATION - PASTE YOUR API KEYS HERE
 # ============================================================================
+
+# 🔑 PASTE YOUR API KEYS BELOW (between the quotes):
+OPENAI_API_KEY = ""  # Paste your OpenAI key here (get from: https://platform.openai.com/api-keys)
+ALPHA_VANTAGE_KEY = ""  # Paste your Alpha Vantage key here (get FREE from: https://www.alphavantage.co/support/#api-key)
 
 ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query"
 
-# Get API keys from environment or prompt user
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY")
-
-# If not set in environment, prompt for interactive input
+# Validate keys are provided
 if not OPENAI_API_KEY or not ALPHA_VANTAGE_KEY:
     print("\n" + "="*60)
-    print("🔑 API Keys Configuration")
+    print("❌ API Keys Missing!")
     print("="*60)
+    print("\n📝 Please edit the script and paste your API keys at the top:")
+    print("   Line ~44: OPENAI_API_KEY = \"your-key-here\"")
+    print("   Line ~45: ALPHA_VANTAGE_KEY = \"your-key-here\"")
+    print("\n🔑 Get your keys:")
+    print("   • OpenAI: https://platform.openai.com/api-keys")
+    print("   • Alpha Vantage (FREE): https://www.alphavantage.co/support/#api-key")
+    print("\n" + "="*60)
+    sys.exit(1)
 
-    if not OPENAI_API_KEY:
-        print("\n📝 OpenAI API Key not found in environment")
-        print("Get your key at: https://platform.openai.com/api-keys")
-        OPENAI_API_KEY = input("\nPaste your OpenAI API key here: ").strip()
-        if not OPENAI_API_KEY:
-            print("❌ OpenAI API key is required!")
-            sys.exit(1)
-        os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-
-    if not ALPHA_VANTAGE_KEY:
-        print("\n📝 Alpha Vantage API Key not found in environment")
-        print("Get your FREE key at: https://www.alphavantage.co/support/#api-key")
-        ALPHA_VANTAGE_KEY = input("\nPaste your Alpha Vantage API key here: ").strip()
-        if not ALPHA_VANTAGE_KEY:
-            print("❌ Alpha Vantage API key is required!")
-            sys.exit(1)
-        os.environ["ALPHA_VANTAGE_KEY"] = ALPHA_VANTAGE_KEY
-
-    print("\n✅ API keys configured!")
-    print("="*60 + "\n")
+# Set environment variables
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+os.environ["ALPHA_VANTAGE_KEY"] = ALPHA_VANTAGE_KEY
 
 
 # ============================================================================
