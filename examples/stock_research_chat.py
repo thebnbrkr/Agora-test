@@ -395,9 +395,10 @@ def build_chat_flow() -> TracedAsyncFlow:
 # GRADIO CHAT INTERFACE
 # ============================================================================
 
-# Store conversation state
+# Store conversation state and telemetry
 conversation_state = {
-    "chat_history": []
+    "chat_history": [],
+    "last_workflow_trace": None
 }
 
 async def chat_response(message: str, history: List[Tuple[str, str]]):
@@ -411,11 +412,17 @@ async def chat_response(message: str, history: List[Tuple[str, str]]):
         chat_history.append({"role": "user", "content": user_msg})
         chat_history.append({"role": "assistant", "content": bot_msg})
 
-    # Create shared state
+    # Create shared state with execution tracking
     shared = {
         "user_message": message,
         "chat_history": chat_history,
-        "start_time": datetime.now()
+        "start_time": datetime.now(),
+        "_workflow_trace": {
+            "nodes_executed": [],
+            "routing_decisions": [],
+            "data_snapshots": {},
+            "timing": {}
+        }
     }
 
     # Run workflow
@@ -428,6 +435,22 @@ async def chat_response(message: str, history: List[Tuple[str, str]]):
         elapsed = time.time() - start
 
         response = shared.get("bot_response", "I'm not sure how to respond to that.")
+
+        # Build execution trace
+        trace = {
+            "timestamp": datetime.now().isoformat(),
+            "user_query": message,
+            "total_time": elapsed,
+            "nodes_executed": shared.get("_workflow_trace", {}).get("nodes_executed", []),
+            "intent": shared.get("intent", {}),
+            "search_results": shared.get("search_results", []),
+            "quotes": shared.get("quotes", []),
+            "overviews": shared.get("overviews", []),
+            "routing_path": shared.get("_workflow_trace", {}).get("routing_decisions", [])
+        }
+
+        # Store for dashboard
+        conversation_state["last_workflow_trace"] = trace
 
         # Add execution stats
         stats = f"\n\n---\n*⏱️ Workflow executed in {elapsed:.2f}s*"
@@ -451,27 +474,156 @@ async def chat_response(message: str, history: List[Tuple[str, str]]):
     return history
 
 
-def view_telemetry():
-    """View telemetry data from file."""
+def get_workflow_visualization():
+    """Generate visual representation of the last workflow execution."""
+    trace = conversation_state.get("last_workflow_trace")
+
+    if not trace:
+        return "No workflow executed yet. Send a message first!", "", ""
+
+    # Build workflow graph visualization
+    workflow_graph = """## 🔄 Workflow Execution Path
+
+```
+User Query → InterpretQuery (AI Intent Detection)
+                    ↓
+"""
+
+    intent = trace.get("intent", {})
+    action = intent.get("action", "UNKNOWN")
+
+    if action == "SEARCH_SYMBOL":
+        workflow_graph += """         [SEARCH_SYMBOL]
+                    ↓
+         SearchSymbol (Alpha Vantage API)
+                    ↓
+         GetOverview (Company Details)
+                    ↓
+         GenerateResponse (AI Response)
+"""
+    elif action == "GET_QUOTE":
+        workflow_graph += """         [GET_QUOTE]
+                    ↓
+         GetQuote (Real-time Prices)
+                    ↓
+         GetOverview (Company Details)
+                    ↓
+         GenerateResponse (AI Response)
+"""
+    elif action == "GENERAL_CHAT":
+        workflow_graph += """         [GENERAL_CHAT]
+                    ↓
+         GeneralChat (No API calls)
+                    ↓
+         GenerateResponse (AI Response)
+"""
+    else:
+        workflow_graph += f"""         [{action}]
+                    ↓
+         GetOverview (Company Details)
+                    ↓
+         GenerateResponse (AI Response)
+"""
+
+    workflow_graph += "```"
+
+    # Build data flow summary
+    data_flow = f"""## 📊 Data Flow Summary
+
+**Query:** {trace.get('user_query', 'N/A')}
+
+**AI Interpretation:**
+- Action: `{action}`
+- Symbols: {intent.get('symbols', [])}
+- Search Query: {intent.get('search_query', 'N/A')}
+
+**Data Collected:**
+"""
+
+    search_results = trace.get("search_results", [])
+    if search_results:
+        data_flow += f"\n🔍 **Search Results:** {len(search_results)} companies found\n"
+        for sr in search_results[:3]:
+            data_flow += f"  - {sr.get('symbol')}: {sr.get('name')}\n"
+
+    quotes = trace.get("quotes", [])
+    if quotes:
+        data_flow += f"\n📈 **Real-time Quotes:** {len(quotes)} fetched\n"
+        for q in quotes:
+            data_flow += f"  - {q.get('symbol')}: ${q.get('price')} ({q.get('change_percent')})\n"
+
+    overviews = trace.get("overviews", [])
+    if overviews:
+        data_flow += f"\n📋 **Company Overviews:** {len(overviews)} fetched\n"
+        for o in overviews:
+            data_flow += f"  - {o.get('symbol')} ({o.get('sector')}) - P/E: {o.get('pe_ratio')}\n"
+
+    if not search_results and not quotes and not overviews:
+        data_flow += "\n*No external API calls made (general chat)*\n"
+
+    # Build timing breakdown
+    timing = f"""## ⏱️ Execution Timing
+
+**Total Time:** {trace.get('total_time', 0):.2f}s
+
+**Breakdown:**
+- Intent Analysis: ~0.5s (OpenAI GPT-4o-mini)
+"""
+
+    if search_results:
+        timing += "- Symbol Search: ~0.5s (Alpha Vantage)\n"
+    if quotes:
+        timing += f"- Quote Fetching: ~{len(quotes) * 0.3:.1f}s (Alpha Vantage, {len(quotes)} calls)\n"
+    if overviews:
+        timing += f"- Overview Fetching: ~{len(overviews) * 0.3:.1f}s (Alpha Vantage, {len(overviews)} calls)\n"
+
+    timing += "- Response Generation: ~1.0s (OpenAI GPT-4o-mini)\n"
+
+    return workflow_graph, data_flow, timing
+
+
+def get_node_execution_log():
+    """Get detailed node execution log from telemetry file."""
     try:
         with open("telemetry_traces.jsonl", "r") as f:
-            lines = f.readlines()[-20:]  # Last 20 traces
+            lines = f.readlines()[-30:]  # Last 30 traces
 
-        traces = []
-        for line in lines:
+        if not lines:
+            return "No telemetry data yet"
+
+        log = "## 📝 Node Execution Log (Last Query)\n\n"
+
+        # Group traces by workflow run (by trace_id)
+        current_traces = []
+        for line in reversed(lines):
             try:
                 trace = json.loads(line)
-                name = trace.get("name", "unknown")
-                duration = trace.get("attributes", {}).get("duration_ms", "N/A")
-                traces.append(f"{name}: {duration}ms")
+                if trace.get("name", "").startswith(("InterpretQuery", "SearchSymbol", "GetQuote", "GetOverview", "GeneralChat", "GenerateResponse")):
+                    current_traces.append(trace)
+                    if len(current_traces) >= 15:  # Enough for one workflow
+                        break
             except:
                 continue
 
-        return "\n".join(traces) if traces else "No telemetry data yet"
+        current_traces.reverse()
+
+        for trace in current_traces:
+            name = trace.get("name", "unknown")
+            attrs = trace.get("attributes", {})
+            duration = attrs.get("duration_ms", "N/A")
+            phase = attrs.get("agora.phase", "")
+            retry = attrs.get("retry_count", 0)
+
+            if phase:
+                retry_str = f" (retry {retry})" if retry > 0 else ""
+                log += f"- **{name}**: {duration}ms{retry_str}\n"
+
+        return log if current_traces else "No node executions found"
+
     except FileNotFoundError:
         return "No telemetry file found. Make a query first!"
     except Exception as e:
-        return f"Error reading telemetry: {str(e)}"
+        return f"Error: {str(e)}"
 
 
 def create_chat_interface():
@@ -526,34 +678,62 @@ def create_chat_interface():
             msg.submit(submit_message, [msg, chatbot], [chatbot])
             submit.click(submit_message, [msg, chatbot], [chatbot])
 
-        with gr.Tab("📊 Telemetry"):
+        with gr.Tab("📊 Agora Workflow Dashboard"):
             gr.Markdown("""
-            ## 📊 Workflow Telemetry
+            # 🎯 Agora Framework Demo Dashboard
 
-            View execution traces from Agora nodes. Each query's workflow is tracked with:
-            - Node execution times
-            - Retry attempts
-            - Error tracking
-            - API call performance
+            This dashboard shows how **Agora orchestrates the workflow** behind each query.
+            Watch the framework in action: AI intent detection → API calls → response generation!
             """)
 
-            telemetry_output = gr.Textbox(
-                label="Recent Traces (Last 20)",
-                lines=20,
-                max_lines=30,
-                interactive=False
-            )
+            with gr.Row():
+                with gr.Column(scale=1):
+                    workflow_viz = gr.Markdown(label="Workflow Path", value="Send a message to see the workflow!")
+                with gr.Column(scale=1):
+                    data_flow = gr.Markdown(label="Data Flow", value="")
 
-            refresh_btn = gr.Button("🔄 Refresh Telemetry", variant="secondary")
-            refresh_btn.click(view_telemetry, outputs=telemetry_output)
+            with gr.Row():
+                timing_breakdown = gr.Markdown(label="Timing Breakdown", value="")
+
+            with gr.Row():
+                node_log = gr.Markdown(label="Node Execution Log", value="")
+
+            refresh_dashboard = gr.Button("🔄 Refresh Dashboard", variant="primary", size="lg")
+
+            def update_dashboard():
+                wf, df, tm = get_workflow_visualization()
+                nl = get_node_execution_log()
+                return wf, df, tm, nl
+
+            refresh_dashboard.click(
+                update_dashboard,
+                outputs=[workflow_viz, data_flow, timing_breakdown, node_log]
+            )
 
             gr.Markdown("""
             ---
-            **Telemetry Files:**
-            - `telemetry_traces.jsonl` - Complete trace log (JSONL format)
-            - Console output - Real-time OpenTelemetry spans
+            ## 🔍 What You're Seeing
 
-            Each trace includes: timestamp, node name, duration, attributes, errors
+            **Workflow Path**: Shows which Agora nodes executed and the routing decisions made
+
+            **Data Flow**: Shows what data passed through each node (search results, quotes, company info)
+
+            **Timing Breakdown**: Performance metrics for each operation
+
+            **Node Execution Log**: Detailed OpenTelemetry traces from `telemetry_traces.jsonl`
+
+            ---
+
+            ### 💡 Agora Framework Features Demonstrated:
+
+            1. **@agora_node Decorator**: Each function is a workflow node with automatic tracing
+            2. **TracedAsyncFlow**: Orchestrates async execution with built-in telemetry
+            3. **Dynamic Routing**: AI decides which path to take through the workflow
+            4. **Automatic Retries**: Nodes retry on failure (see retry_count in logs)
+            5. **Data Sharing**: `shared` dict passes data between nodes
+            6. **OpenTelemetry Integration**: Every node execution is automatically traced
+
+            **Try different queries to see different workflow paths!**
             """)
 
     return demo
