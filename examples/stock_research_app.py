@@ -2,19 +2,7 @@
 """
 Stock Research Application using Agora + Alpha Vantage + OpenAI + Gradio
 
-This demonstrates:
-- Agora's @agora_node decorator for workflow creation
-- Built-in telemetry with Traceloop/OpenTelemetry
-- Alpha Vantage API for real-time stock data
-- Gradio interface for user interaction
-- Efficient async processing with TracedAsyncFlow
-
-Usage:
-    python stock_research_app.py
-
-Environment variables required:
-    OPENAI_API_KEY - Your OpenAI API key
-    ALPHA_VANTAGE_KEY - Your Alpha Vantage API key (free from alphavantage.co)
+🔑 PASTE YOUR API KEYS BELOW (lines 20-21)
 """
 
 import os
@@ -25,7 +13,34 @@ import json
 from datetime import datetime
 from typing import Dict, Any
 
-# Check for required dependencies
+# ============================================================================
+# 🔑 PASTE YOUR API KEYS HERE
+# ============================================================================
+
+OPENAI_API_KEY = ""  # ← PASTE YOUR OPENAI KEY HERE
+ALPHA_VANTAGE_KEY = ""  # ← PASTE YOUR ALPHA VANTAGE KEY HERE
+
+# ============================================================================
+
+# Validate keys
+if not OPENAI_API_KEY or not ALPHA_VANTAGE_KEY:
+    print("\n" + "="*70)
+    print("❌ API KEYS MISSING!")
+    print("="*70)
+    print("\n📝 Edit this file and paste your keys on lines 20-21:")
+    print("   OPENAI_API_KEY = \"your-key-here\"")
+    print("   ALPHA_VANTAGE_KEY = \"your-key-here\"")
+    print("\n🔑 Get your keys:")
+    print("   • OpenAI: https://platform.openai.com/api-keys")
+    print("   • Alpha Vantage (FREE): https://www.alphavantage.co/support/#api-key")
+    print("\n" + "="*70 + "\n")
+    sys.exit(1)
+
+# Set environment
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+os.environ["ALPHA_VANTAGE_KEY"] = ALPHA_VANTAGE_KEY
+
+# Check dependencies
 try:
     import gradio as gr
     from openai import AsyncOpenAI
@@ -36,36 +51,6 @@ except ImportError as e:
     print("pip install gradio openai traceloop-sdk opentelemetry-api opentelemetry-sdk")
     sys.exit(1)
 
-
-# ============================================================================
-# CONFIGURATION - PASTE YOUR API KEYS HERE
-# ============================================================================
-
-# 🔑 PASTE YOUR API KEYS BELOW (between the quotes):
-OPENAI_API_KEY = ""  # Paste your OpenAI key here (get from: https://platform.openai.com/api-keys)
-ALPHA_VANTAGE_KEY = ""  # Paste your Alpha Vantage key here (get FREE from: https://www.alphavantage.co/support/#api-key)
-
-ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query"
-
-# Validate keys are provided
-if not OPENAI_API_KEY or not ALPHA_VANTAGE_KEY:
-    print("\n" + "="*60)
-    print("❌ API Keys Missing!")
-    print("="*60)
-    print("\n📝 Please edit the script and paste your API keys at the top:")
-    print("   Line ~44: OPENAI_API_KEY = \"your-key-here\"")
-    print("   Line ~45: ALPHA_VANTAGE_KEY = \"your-key-here\"")
-    print("\n🔑 Get your keys:")
-    print("   • OpenAI: https://platform.openai.com/api-keys")
-    print("   • Alpha Vantage (FREE): https://www.alphavantage.co/support/#api-key")
-    print("\n" + "="*60)
-    sys.exit(1)
-
-# Set environment variables
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-os.environ["ALPHA_VANTAGE_KEY"] = ALPHA_VANTAGE_KEY
-
-
 # ============================================================================
 # INITIALIZE TELEMETRY
 # ============================================================================
@@ -74,39 +59,24 @@ print("🚀 Initializing Agora with telemetry...")
 
 init_traceloop(
     app_name="stock_research_app",
-    export_to_console=True,  # Show telemetry in console
-    disable_content_logging=True  # Keep API calls private
+    export_to_console=True,
+    disable_content_logging=True
 )
 
-# Initialize OpenAI client
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 print("✅ Telemetry initialized!")
 print("📊 All node executions will be traced automatically\n")
 
-
 # ============================================================================
 # ALPHA VANTAGE API HELPERS
 # ============================================================================
 
+ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query"
+
 def fetch_alpha_vantage(function: str, symbol: str = None, **kwargs) -> Dict[str, Any]:
-    """
-    Efficient Alpha Vantage API caller with error handling.
-
-    Args:
-        function: Alpha Vantage function name (e.g., GLOBAL_QUOTE)
-        symbol: Stock symbol (optional, depending on function)
-        **kwargs: Additional parameters
-
-    Returns:
-        Dict containing API response or error
-    """
-    params = {
-        "function": function,
-        "apikey": ALPHA_VANTAGE_KEY,
-        **kwargs
-    }
-
+    """Efficient Alpha Vantage API caller with error handling."""
+    params = {"function": function, "apikey": ALPHA_VANTAGE_KEY, **kwargs}
     if symbol:
         params["symbol"] = symbol
 
@@ -115,16 +85,14 @@ def fetch_alpha_vantage(function: str, symbol: str = None, **kwargs) -> Dict[str
         response.raise_for_status()
         data = response.json()
 
-        # Check for API errors
         if "Error Message" in data:
             return {"error": data["Error Message"]}
-        if "Note" in data:  # Rate limit
+        if "Note" in data:
             return {"error": "API rate limit reached. Please wait a minute."}
 
         return data
     except Exception as e:
         return {"error": str(e)}
-
 
 # ============================================================================
 # STOCK RESEARCH NODES (using @agora_node decorator)
@@ -132,11 +100,7 @@ def fetch_alpha_vantage(function: str, symbol: str = None, **kwargs) -> Dict[str
 
 @agora_node(name="ValidateSymbol")
 async def validate_symbol(shared: Dict[str, Any]) -> str:
-    """
-    Validate the stock symbol from user input.
-
-    Returns routing action: "fetch_quote" or "error"
-    """
+    """Validate the stock symbol from user input."""
     symbol = shared.get("symbol", "").strip().upper()
 
     if not symbol:
@@ -154,14 +118,9 @@ async def validate_symbol(shared: Dict[str, Any]) -> str:
 
 @agora_node(name="FetchQuote", max_retries=2, wait=1)
 async def fetch_quote(shared: Dict[str, Any]) -> str:
-    """
-    Fetch real-time stock quote from Alpha Vantage.
-
-    Returns routing action: "fetch_overview" or "error"
-    """
+    """Fetch real-time stock quote from Alpha Vantage."""
     symbol = shared["symbol"]
 
-    # Use asyncio.to_thread for sync API call
     data = await asyncio.to_thread(
         fetch_alpha_vantage,
         "GLOBAL_QUOTE",
@@ -191,11 +150,7 @@ async def fetch_quote(shared: Dict[str, Any]) -> str:
 
 @agora_node(name="FetchOverview", max_retries=2, wait=1)
 async def fetch_overview(shared: Dict[str, Any]) -> str:
-    """
-    Fetch company fundamentals and overview.
-
-    Returns routing action: "fetch_historical"
-    """
+    """Fetch company fundamentals and overview."""
     symbol = shared["symbol"]
 
     data = await asyncio.to_thread(
@@ -205,7 +160,6 @@ async def fetch_overview(shared: Dict[str, Any]) -> str:
     )
 
     if "error" in data:
-        # Non-critical error - continue without overview
         shared["overview"] = {"error": data["error"]}
     else:
         shared["overview"] = {
@@ -217,7 +171,7 @@ async def fetch_overview(shared: Dict[str, Any]) -> str:
             "dividend_yield": data.get("DividendYield", "N/A"),
             "52week_high": data.get("52WeekHigh", "N/A"),
             "52week_low": data.get("52WeekLow", "N/A"),
-            "description": data.get("Description", "N/A")[:500]  # Truncate
+            "description": data.get("Description", "N/A")[:500]
         }
 
     return "fetch_historical"
@@ -225,25 +179,20 @@ async def fetch_overview(shared: Dict[str, Any]) -> str:
 
 @agora_node(name="FetchHistorical", max_retries=2, wait=1)
 async def fetch_historical(shared: Dict[str, Any]) -> str:
-    """
-    Fetch recent daily price history.
-
-    Returns routing action: "analyze"
-    """
+    """Fetch recent daily price history."""
     symbol = shared["symbol"]
 
     data = await asyncio.to_thread(
         fetch_alpha_vantage,
         "TIME_SERIES_DAILY",
         symbol=symbol,
-        outputsize="compact"  # Last 100 days
+        outputsize="compact"
     )
 
     if "error" in data:
         shared["historical"] = {"error": data["error"]}
     else:
         time_series = data.get("Time Series (Daily)", {})
-        # Get last 10 days
         recent = dict(list(time_series.items())[:10])
         shared["historical"] = recent
 
@@ -252,16 +201,11 @@ async def fetch_historical(shared: Dict[str, Any]) -> str:
 
 @agora_node(name="AnalyzeStock", max_retries=2, wait=1)
 async def analyze_stock(shared: Dict[str, Any]) -> str:
-    """
-    Generate AI-powered stock analysis using OpenAI.
-
-    Returns routing action: "complete"
-    """
+    """Generate AI-powered stock analysis using OpenAI."""
     symbol = shared["symbol"]
     quote = shared.get("quote", {})
     overview = shared.get("overview", {})
 
-    # Build analysis prompt
     prompt = f"""Analyze the following stock data for {symbol}:
 
 **Current Quote:**
@@ -301,18 +245,14 @@ Keep it concise and professional."""
 
     except Exception as e:
         shared["analysis"] = f"Analysis failed: {str(e)}"
-        shared["success"] = True  # Still show results
+        shared["success"] = True
 
     return "complete"
 
 
 @agora_node(name="HandleError")
 async def handle_error(shared: Dict[str, Any]) -> str:
-    """
-    Handle any errors that occurred during the workflow.
-
-    Returns routing action: "complete"
-    """
+    """Handle any errors that occurred during the workflow."""
     error = shared.get("error", "Unknown error")
     shared["result"] = f"❌ Error: {error}"
     return "complete"
@@ -323,19 +263,11 @@ async def handle_error(shared: Dict[str, Any]) -> str:
 # ============================================================================
 
 def build_stock_research_flow() -> TracedAsyncFlow:
-    """
-    Build the complete stock research workflow with automatic telemetry.
-
-    Returns:
-        TracedAsyncFlow instance ready to run
-    """
-    # Create flow with telemetry
+    """Build the complete stock research workflow with automatic telemetry."""
     flow = TracedAsyncFlow("StockResearch")
 
-    # Set starting node
     flow.start(validate_symbol)
 
-    # Build the flow graph
     validate_symbol - "fetch_quote" >> fetch_quote
     validate_symbol - "error" >> handle_error
 
@@ -346,9 +278,6 @@ def build_stock_research_flow() -> TracedAsyncFlow:
 
     fetch_historical - "analyze" >> analyze_stock
 
-    # All paths lead to completion
-    # (flow ends when no edges are defined for the returned action)
-
     return flow
 
 
@@ -357,19 +286,8 @@ def build_stock_research_flow() -> TracedAsyncFlow:
 # ============================================================================
 
 async def research_stock(symbol: str):
-    """
-    Main function called by Gradio to research a stock.
-
-    Args:
-        symbol: Stock ticker symbol
-
-    Returns:
-        Tuple of (quote_text, overview_text, analysis_text)
-    """
-    # Create shared state
+    """Main function called by Gradio to research a stock."""
     shared = {"symbol": symbol}
-
-    # Build and run flow
     flow = build_stock_research_flow()
 
     try:
@@ -377,16 +295,13 @@ async def research_stock(symbol: str):
     except Exception as e:
         return f"❌ Workflow error: {str(e)}", None, None
 
-    # Check for errors
     if "error" in shared and not shared.get("success"):
         return f"❌ {shared['error']}", None, None
 
-    # Format results
     quote = shared.get("quote", {})
     overview = shared.get("overview", {})
     analysis = shared.get("analysis", "No analysis available")
 
-    # Build quote summary
     quote_text = f"""## 📈 {symbol} - Live Quote
 
 **Price:** ${quote.get('price', 'N/A')}
@@ -395,7 +310,6 @@ async def research_stock(symbol: str):
 **Day Range:** ${quote.get('low', 'N/A')} - ${quote.get('high', 'N/A')}
 """
 
-    # Build company overview
     overview_text = f"""## 🏢 Company Overview
 
 **Name:** {overview.get('name', 'N/A')}
@@ -411,7 +325,6 @@ async def research_stock(symbol: str):
 {overview.get('description', '')[:300]}...
 """
 
-    # Build AI analysis
     analysis_text = f"""## 🤖 AI Analysis
 
 {analysis}
@@ -425,12 +338,7 @@ async def research_stock(symbol: str):
 
 
 def create_interface():
-    """
-    Create the Gradio interface for stock research.
-
-    Returns:
-        Gradio Blocks interface
-    """
+    """Create the Gradio interface for stock research."""
     with gr.Blocks(theme=gr.themes.Soft(), title="Stock Research with Agora") as demo:
         gr.Markdown("""
         # 📊 Stock Research Demo
@@ -467,7 +375,6 @@ def create_interface():
         Check the console for telemetry traces showing node execution times and spans!
         """)
 
-        # Wire up the button
         submit_btn.click(
             fn=research_stock,
             inputs=[symbol_input],
@@ -482,24 +389,21 @@ def create_interface():
 # ============================================================================
 
 def main():
-    """
-    Main entry point for the application.
-    """
+    """Main entry point for the application."""
     print("\n" + "="*60)
     print("📊 Stock Research App - Powered by Agora")
     print("="*60)
     print("\n🔧 Configuration:")
-    print(f"   • OpenAI API: {'✅ Configured' if OPENAI_API_KEY else '❌ Missing'}")
-    print(f"   • Alpha Vantage: {'✅ Configured' if ALPHA_VANTAGE_KEY else '❌ Missing'}")
+    print(f"   • OpenAI API: ✅ Configured")
+    print(f"   • Alpha Vantage: ✅ Configured")
     print(f"   • Telemetry: ✅ Enabled (OpenTelemetry + Traceloop)")
     print("\n🚀 Starting Gradio interface...\n")
 
-    # Create and launch interface
     demo = create_interface()
     demo.launch(
-        share=False,  # Set to True for public sharing
-        server_name="0.0.0.0",  # Listen on all interfaces
-        server_port=7860,  # Default Gradio port
+        share=False,
+        server_name="0.0.0.0",
+        server_port=7860,
         show_error=True
     )
 
